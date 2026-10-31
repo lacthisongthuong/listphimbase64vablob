@@ -1,0 +1,247 @@
+
+// ==UserScript==
+// @name         JWPlayer M3U8 Decoder Mobile + PC
+// @namespace    local
+// @version      2.2
+// @description  Capture and decode JWPlayer M3U8 Base64 Data URI
+// @match        *://*/*
+// @run-at       document-start
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    "use strict";
+
+    const PREFIX = "data:application/vnd.apple.mpegurl;base64,";
+    const MESSAGE = "JW_M3U8_CAPTURE_V22";
+
+    if (window.__JW_M3U8_V22__) return;
+    window.__JW_M3U8_V22__ = true;
+
+    let lastBase64 = "";
+    let panel = null;
+    let minimized = true;
+
+    // Giải mã Base64
+    function decodeBase64(data) {
+        data = data.replace(/-/g, "+")
+                   .replace(/_/g, "/")
+                   .replace(/\s/g, "");
+
+        data += "=".repeat((4 - data.length % 4) % 4);
+
+        const binary = atob(data);
+        const bytes = Uint8Array.from(
+            binary,
+            c => c.charCodeAt(0)
+        );
+
+        return new TextDecoder("utf-8").decode(bytes);
+    }
+
+    function setStatus(message, color) {
+        const status = panel?.querySelector("#jw-status");
+        if (status) {
+            status.textContent = message;
+            status.style.color = color || "#ffcc00";
+        }
+    }
+
+    // Tạo bảng nhỏ, không che trình phát
+    function createPanel() {
+        if (panel?.isConnected) return panel;
+
+        const root = document.documentElement;
+        if (!root) return null;
+
+        panel = document.createElement("div");
+        panel.id = "jw-m3u8-panel";
+
+        panel.style.cssText = `
+            position:fixed !important;
+            z-index:2147483647 !important;
+            top:8px !important;
+            right:8px !important;
+            width:min(300px,calc(100vw - 16px)) !important;
+            background:#181818 !important;
+            color:white !important;
+            padding:8px !important;
+            border:1px solid #777 !important;
+            border-radius:9px !important;
+            box-sizing:border-box !important;
+            font:13px Arial,sans-serif !important;
+            box-shadow:0 2px 10px #0009 !important;
+        `;
+
+        panel.innerHTML = `
+            <div style="
+                display:flex;
+                align-items:center;
+                justify-content:space-between;
+                gap:5px;
+            ">
+                <span style="font-weight:bold">
+                    JW M3U8
+                    <span id="jw-status" style="color:#ffcc00">
+                        Waiting...
+                    </span>
+                </span>
+                <button id="jw-toggle">+</button>
+                <button id="jw-hide">×</button>
+            </div>
+
+            <div id="jw-content" style="display:none;margin-top:8px">
+                <textarea id="jw-output"
+                    placeholder="Waiting for Base64..."
+                    style="
+                        width:100%;
+                        height:140px;
+                        box-sizing:border-box;
+                        background:#222;
+                        color:#00ff80;
+                        border:1px solid #666;
+                        font-size:12px;
+                    "></textarea>
+
+                <div style="display:flex;gap:7px;margin-top:7px">
+                    <button id="jw-copy">Copy</button>
+                    <button id="jw-save">Save M3U8</button>
+                </div>
+            </div>
+        `;
+
+        root.appendChild(panel);
+
+        panel.querySelector("#jw-toggle").onclick = () => {
+            minimized = !minimized;
+            panel.querySelector("#jw-content").style.display =
+                minimized ? "none" : "block";
+            panel.querySelector("#jw-toggle").textContent =
+                minimized ? "+" : "−";
+        };
+
+        panel.querySelector("#jw-hide").onclick = () => {
+            panel.style.display = "none";
+        };
+
+        panel.querySelector("#jw-copy").onclick = async () => {
+            const output = panel.querySelector("#jw-output");
+
+            try {
+                await navigator.clipboard.writeText(output.value);
+                setStatus("Copied ✓", "#00ff80");
+            } catch (e) {
+                output.focus();
+                output.select();
+                document.execCommand("copy");
+                setStatus("Selected", "#00ff80");
+            }
+        };
+
+        panel.querySelector("#jw-save").onclick = () => {
+            const output = panel.querySelector("#jw-output");
+
+            const blob = new Blob(
+                [output.value],
+                { type: "application/vnd.apple.mpegurl" }
+            );
+
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+
+            a.href = url;
+            a.download = "playlist.m3u8";
+            a.click();
+
+            setTimeout(() => URL.revokeObjectURL(url), 3000);
+        };
+
+        return panel;
+    }
+
+    function showResult(base64) {
+        if (window !== window.top) return;
+
+        const p = createPanel();
+        if (!p) return;
+
+        try {
+            const m3u8 = decodeBase64(base64);
+
+            p.querySelector("#jw-output").value = m3u8;
+            setStatus("Captured ✓", "#00ff80");
+
+            minimized = false;
+            p.querySelector("#jw-content").style.display = "block";
+            p.querySelector("#jw-toggle").textContent = "−";
+
+            p.style.display = "block";
+
+            console.log("[JW M3U8] Decode successful");
+        } catch (e) {
+            setStatus("Decode error", "#ff5555");
+            console.error("[JW M3U8] Decode error:", e);
+        }
+    }
+
+    // Chỉ trang chính tạo giao diện và nhận dữ liệu
+    if (window === window.top) {
+        function waitForDOM() {
+            if (document.documentElement) {
+                createPanel();
+            } else {
+                setTimeout(waitForDOM, 100);
+            }
+        }
+
+        waitForDOM();
+
+        window.addEventListener("message", function (event) {
+
+            const data = event.data;
+
+            if (
+                data &&
+                data.source === MESSAGE &&
+                typeof data.base64 === "string"
+            ) {
+                showResult(data.base64);
+            }
+        });
+    }
+
+    // HOOK TRỰC TIẾP GIỐNG BẢN PC
+    const originalOpen = XMLHttpRequest.prototype.open;
+
+    XMLHttpRequest.prototype.open = function (method, url, ...args) {
+        if (
+            typeof url === "string" &&
+            url.startsWith(PREFIX)
+        ) {
+            const base64 = url.slice(PREFIX.length);
+
+            if (base64 && base64 !== lastBase64) {
+                lastBase64 = base64;
+
+                console.log("[JW M3U8] Data URI captured!");
+
+                if (window === window.top) {
+                    setTimeout(() => showResult(base64), 0);
+                } else {
+                    window.top.postMessage({
+                        source: MESSAGE,
+                        base64: base64
+                    }, "*");
+                }
+            }
+        }
+
+        return originalOpen.call(this, method, url, ...args);
+    };
+
+    console.log(
+        "[JW M3U8] Direct XHR hook installed:",
+        location.href
+    );
+
+})();
