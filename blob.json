@@ -1,0 +1,193 @@
+
+ // ==UserScript==
+ // @name         Blob URL Viewer Mobile + PC
+ // @namespace    local
+ // @version      1.0
+ // @description  Capture and display Blob URLs
+ // @match        *://*/*
+ // @run-at       document-start
+ // @grant        none
+ // ==/UserScript==
+
+ (function () {
+     "use strict";
+
+     const MESSAGE = "BLOB_URL_CAPTURE_V1";
+
+     if (window.__BLOB_URL_VIEWER_V1__) return;
+     window.__BLOB_URL_VIEWER_V1__ = true;
+
+     let panel = null;
+     const seen = new Set();
+
+     function createPanel() {
+         if (panel?.isConnected) return panel;
+         if (!document.documentElement) return null;
+
+         panel = document.createElement("div");
+         panel.id = "blob-url-viewer";
+
+         panel.style.cssText = `
+             position:fixed!important;
+             z-index:2147483647!important;
+             top:8px!important;
+             right:8px!important;
+             width:min(340px,calc(100vw - 16px))!important;
+             max-height:60vh!important;
+             overflow:auto!important;
+             background:#181818!important;
+             color:#fff!important;
+             padding:10px!important;
+             border:1px solid #777!important;
+             border-radius:9px!important;
+             box-sizing:border-box!important;
+             font:13px Arial,sans-serif!important;
+         `;
+
+         const header = document.createElement("div");
+         header.style.cssText =
+             "display:flex;justify-content:space-between;gap:8px";
+
+         const title = document.createElement("b");
+         title.textContent = "Blob URLs ";
+
+         const status = document.createElement("span");
+         status.id = "blob-count";
+         status.textContent = "0";
+
+         title.appendChild(status);
+
+         const toggle = document.createElement("button");
+         toggle.textContent = "−";
+
+         const hide = document.createElement("button");
+         hide.textContent = "×";
+
+         header.append(title, toggle, hide);
+
+         const content = document.createElement("div");
+         content.id = "blob-content";
+
+         toggle.onclick = () => {
+             const hidden = content.style.display === "none";
+             content.style.display = hidden ? "block" : "none";
+             toggle.textContent = hidden ? "−" : "+";
+         };
+
+         hide.onclick = () => {
+             panel.style.display = "none";
+         };
+
+         panel.append(header, content);
+         document.documentElement.appendChild(panel);
+
+         return panel;
+     }
+
+     function addURL(url) {
+         if (typeof url !== "string" ||
+             !url.startsWith("blob:") ||
+             seen.has(url)) return;
+
+         seen.add(url);
+
+         const p = createPanel();
+         if (!p) return;
+
+         const content = p.querySelector("#blob-content");
+         const row = document.createElement("div");
+
+         row.style.cssText =
+             "border-top:1px solid #555;padding:8px 0;overflow-wrap:anywhere";
+
+         const link = document.createElement("a");
+         link.href = url;
+         link.textContent = url;
+         link.target = "_blank";
+         link.rel = "noopener noreferrer";
+         link.style.cssText = "color:#69b7ff;word-break:break-all";
+
+		const download = document.createElement("button");
+		download.textContent = "Download";
+		download.style.cssText = "margin:6px 0 0 6px";
+
+		download.onclick = async () => {
+			try {
+				const response = await fetch(url);
+				const blob = await response.blob();
+
+				const objectURL = URL.createObjectURL(blob);
+				const a = document.createElement("a");
+
+				a.href = objectURL;
+				a.download = "blob-download";
+				document.body.appendChild(a);
+				a.click();
+				a.remove();
+
+				setTimeout(() => URL.revokeObjectURL(objectURL), 5000);
+
+				download.textContent = "Downloaded!";
+			} catch (error) {
+				console.error("[Blob URL Viewer] Download failed:", error);
+				download.textContent = "Failed";
+			}
+		};
+
+         row.append(link, document.createElement("br"), download);
+         content.appendChild(row);
+
+         p.querySelector("#blob-count").textContent =
+             String(seen.size);
+
+         p.style.display = "block";
+
+         console.log("[Blob URL Viewer] Captured:", url);
+     }
+
+     // Nhận URL từ frame con cùng trang
+     window.addEventListener("message", event => {
+         if (event.source !== window) return;
+
+         const data = event.data;
+
+         if (data?.source === MESSAGE &&
+             typeof data.url === "string") {
+             addURL(data.url);
+         }
+     });
+
+     // Theo dõi createObjectURL
+     const originalCreate = URL.createObjectURL;
+
+     URL.createObjectURL = function (object) {
+         const url = originalCreate.call(this, object);
+
+         addURL(url);
+
+         if (window !== window.top) {
+             window.top.postMessage({
+                 source: MESSAGE,
+                 url
+             }, "*");
+         }
+
+         return url;
+     };
+
+     // Khởi tạo giao diện sau khi DOM sẵn sàng
+     function init() {
+         if (document.documentElement) {
+             createPanel();
+         } else {
+             setTimeout(init, 50);
+         }
+     }
+
+     init();
+
+     console.log(
+         "[Blob URL Viewer] Hook installed:",
+         location.href
+     );
+ })();
